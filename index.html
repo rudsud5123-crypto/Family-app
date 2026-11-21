@@ -69,6 +69,21 @@ input,select,textarea{font:inherit;color:inherit}
 }
 .greenDot{position:absolute;right:1px;bottom:3px;width:10px;height:10px;border-radius:50%;background:#38C172;border:2px solid #fff}
 
+/* ---------- 🔔 변경 알림 시트 ---------- */
+.chgHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 6px}
+.chgHead b{font-size:11.5px;color:#8A6A50;font-weight:800;letter-spacing:-.2px}
+.chgCount{font-size:10px;color:#B49B8C;font-weight:700}
+.chgList{display:flex;flex-direction:column;gap:6px}
+.chgRow{display:flex;gap:8px;align-items:flex-start;background:#FFFDF6;border:1px solid #F3E8D2;border-radius:14px;padding:9px 10px}
+.chgRow.new{background:#FFF6E6;border-color:#F3E3BE}
+.chgRow.read{opacity:.72}
+.chgIcon{font-size:14px;line-height:1.25;flex:0 0 auto}
+.chgTxt{flex:1;min-width:0}
+.chgTxt b{display:block;font-size:11.5px;color:#6E5A46;font-weight:800;line-height:1.35;word-break:keep-all}
+.chgTxt small{display:block;font-size:10px;color:#A6927E;margin-top:2px;line-height:1.4;word-break:keep-all}
+.chgDot{width:7px;height:7px;border-radius:50%;background:#FF6B8A;flex:0 0 auto;margin-top:5px}
+.chgEmpty{background:#FFFDF6;border:1px dashed #EFE3C9;border-radius:14px;padding:14px 12px;text-align:center;font-size:11px;color:#A6927E;line-height:1.5}
+
 /* ---------- views ---------- */
 .view{display:none;padding-top:2px}
 .view.active{display:block;animation:fade .22s ease}
@@ -1759,6 +1774,15 @@ body{position:relative}
     try{ next = migrateState(normalize(data)); }catch(e){ return; }
     next.settings = Object.assign({}, next.settings, keep);
     next.settings.lastSync = new Date().toISOString();
+    /* 이 세션에서 처음 받는 기록(첫 연결)은 '변경'으로 세지 않는다.
+       비교는 양쪽을 같은 규칙으로 정리한 뒤에 한다(처음 만든 상태와 정리된 상태의 모양 차이로
+       있지도 않은 '수정'이 잡히지 않도록). */
+    var changes = [];
+    if(syncAppliedTs){
+      var before = state;
+      try{ before = normalize(JSON.parse(JSON.stringify(state))); }catch(e){ before = state; }
+      try{ changes = diffStates(before, next); }catch(e){ changes = []; }
+    }
     syncApplying = true;
     state = next;
     try{ localStorage.setItem(STORE, JSON.stringify(state)); }catch(e){}
@@ -1770,7 +1794,13 @@ body{position:relative}
     syncInfo.lastBy = payload.by || '';
     renderAll();
     renderSync();
-    if(Date.now() - syncToastAt > 12000){ toast('가족 폰의 새 기록을 받았어요'); syncToastAt = Date.now(); }
+    if(changes.length) unreadAdd(changes, new Date().toISOString());
+    if(Date.now() - syncToastAt > 12000){
+      toast(changes.length
+        ? changes[0].title + (changes.length > 1 ? ' 외 ' + (changes.length - 1) + '건' : '')
+        : '가족 폰의 새 기록을 받았어요');
+      syncToastAt = Date.now();
+    }
   }
 
   function scheduleSyncPush(){
@@ -2207,11 +2237,13 @@ body{position:relative}
     return '<div class="card"><div class="stockHead"><h2>🥛 살림 재고</h2><span class="hint">우유 하루 2팩<br>기저귀 평일 3·주말 5개</span></div>' + rows + '</div>';
   }
   function updateBell(){
-    var n = notifications().length;
+    var n = unreadCount();
     var b = $('#bellBadge');
     if(!b) return;
     b.textContent = n > 9 ? '9+' : String(n);
     b.style.display = n ? 'grid' : 'none';
+    var btn = b.parentNode;
+    if(btn && btn.setAttribute) btn.setAttribute('aria-label', n ? '새 소식 ' + n + '건' : '알림');
   }
   function notifications(){
     var items = [];
@@ -2232,6 +2264,314 @@ body{position:relative}
       items.push({icon:'💾', text:'마지막 저장 ' + timeLabel(state.settings.lastSync)});
     }
     return items;
+  }
+
+  /* ---------------- 상대 폰 변경 알림 (기기별 unreadChanges) ----------------
+     · 실시간 동기화로 '다른 기기(by !== 내 기기)'가 보낸 새 기록을 받았을 때만 쌓인다.
+     · 이 기기에서 직접 고친 내용이나 동기화가 꺼진 상태의 변경은 배지로 띄우지 않는다.
+     · 목록은 이 폰 localStorage에만 남고(최대 20건) 서버로는 보내지 않는다. */
+  var UNREAD_STORE = 'familyRecordApp.unread.v1';
+  var UNREAD_MAX = 20;
+  var unreadChanges = [];
+  var notifSheetOpen = false;
+
+  function unreadLoad(){
+    var arr = null;
+    try{ arr = JSON.parse(localStorage.getItem(UNREAD_STORE) || '[]'); }catch(e){ arr = null; }
+    unreadChanges = Array.isArray(arr) ? arr.filter(function(c){
+      return c && typeof c.title === 'string' && c.title;
+    }).slice(0, UNREAD_MAX).map(function(c){
+      return {id: c.id || uid(), at: c.at || new Date().toISOString(),
+              icon: c.icon || '🔔', title: String(c.title), sub: String(c.sub || ''), read: !!c.read};
+    }) : [];
+    if(!Array.isArray(arr) || arr.length > UNREAD_MAX) unreadSave();
+  }
+  function unreadSave(){
+    try{ localStorage.setItem(UNREAD_STORE, JSON.stringify(unreadChanges.slice(0, UNREAD_MAX))); }catch(e){}
+  }
+  function unreadCount(){
+    var n = 0;
+    unreadChanges.forEach(function(c){ if(!c.read) n++; });
+    return n;
+  }
+  function unreadAdd(items, at){
+    if(!items || !items.length) return;
+    var stamp = at || new Date().toISOString();
+    var stampMs = new Date(stamp).getTime() || Date.now();
+    var fresh = [];
+    items.slice().reverse().forEach(function(it){
+      var top = unreadChanges[0];
+      /* 90초 안에 같은 내용이 또 오면 새 줄을 만들지 않고 시각만 갱신한다 */
+      if(top && top.title === it.title && (top.sub || '') === (it.sub || '') &&
+         Math.abs(stampMs - new Date(top.at).getTime()) < 90000){
+        top.at = stamp;
+        top.read = false;
+        return;
+      }
+      fresh.push({id: uid(), at: stamp, icon: it.icon || '🔔', title: it.title, sub: it.sub || '', read: false});
+    });
+    if(!fresh.length){ unreadSave(); updateBell(); return; }
+    unreadChanges = fresh.concat(unreadChanges).slice(0, UNREAD_MAX);
+    unreadSave();
+    updateBell();
+    if(notifSheetOpen){
+      /* 시트를 열어 둔 채로 새 소식이 오면 그 자리에서 보여 주고, '모두 읽음'은 사용자가 누른다 */
+      var ids = unreadChanges.filter(function(c){ return !c.read; }).map(function(c){ return c.id; });
+      renderNotifSheet(ids);
+    }
+  }
+  function unreadMarkRead(){
+    var hit = false;
+    unreadChanges.forEach(function(c){ if(!c.read){ c.read = true; hit = true; } });
+    if(hit) unreadSave();
+    updateBell();
+  }
+  function agoLabel(iso){
+    var t = new Date(iso).getTime();
+    if(!t) return '';
+    var d = Date.now() - t;
+    if(d < 0) d = 0;
+    if(d < 60000) return '방금 전';
+    if(d < 3600000) return Math.floor(d / 60000) + '분 전';
+    if(d < 86400000) return Math.floor(d / 3600000) + '시간 전';
+    if(d < 86400000 * 7) return Math.floor(d / 86400000) + '일 전';
+    return dateLabel(iso) + ' ' + timeLabel(iso);
+  }
+
+  /* 상태 비교 도우미 */
+  function idMap(list){
+    var m = {};
+    (Array.isArray(list) ? list : []).forEach(function(x){ if(x && x.id) m[x.id] = x; });
+    return m;
+  }
+  function sameVal(a, b){
+    if(a == null && b == null) return true;
+    return String(a == null ? '' : a) === String(b == null ? '' : b);
+  }
+  function shortList(arr, n){
+    arr = (arr || []).filter(function(x){ return x !== '' && x != null; });
+    if(!arr.length) return '';
+    var head = arr.slice(0, n || 2), more = arr.length - head.length;
+    return head.join(' · ') + (more > 0 ? ' 외 ' + more + '개' : '');
+  }
+  function whoLabel(who){
+    if(who === 'dad') return '아빠';
+    if(who === 'mom') return '엄마';
+    return WHO_NAME[who] || '가족';
+  }
+  function evDayText(e){
+    if(!e) return '';
+    if(e.start){
+      var a = dateLabel(e.start + 'T00:00:00');
+      return (e.end && e.end !== e.start) ? a + '~' + dateLabel(e.end + 'T00:00:00') : a;
+    }
+    if(e.md && /^\d{2}-\d{2}$/.test(e.md)) return Number(e.md.slice(0, 2)) + '월 ' + Number(e.md.slice(3)) + '일';
+    return '';
+  }
+  function jsonSame(a, b){
+    try{ return JSON.stringify(a || null) === JSON.stringify(b || null); }catch(e){ return true; }
+  }
+
+  /* 직전 화면 상태(state)와 방금 받은 상태(next)를 비교해 바뀐 것만 한 줄씩 요약한다 */
+  function diffStates(prev, next){
+    var out = [];
+    if(!prev || !next) return out;
+    var t = todayKey();
+    function add(icon, title, sub){ if(title) out.push({icon: icon, title: title, sub: sub || ''}); }
+    function addGroup(icon, label, items, titleOf, subOf){
+      if(!items || !items.length) return;
+      if(items.length === 1) add(icon, label + ': ' + titleOf(items[0]), subOf ? subOf(items[0]) : '');
+      else add(icon, label + ' ' + items.length + '개', shortList(items.map(titleOf)));
+    }
+
+    /* 💌 부부 쪽지 */
+    var pNotes = idMap(prev.notes), nNotes = idMap(next.notes);
+    var notesAdd = (next.notes || []).filter(function(n){ return n && n.text && !pNotes[n.id]; });
+    var notesDel = (prev.notes || []).filter(function(n){ return n && n.text && !nNotes[n.id]; });
+    if(notesAdd.length === 1){
+      add('💌', '새 쪽지: ' + notesAdd[0].text, whoLabel(notesAdd[0].who) + '가 남겼어요');
+    } else if(notesAdd.length > 1){
+      add('💌', '새 쪽지 ' + notesAdd.length + '개', '마지막: ' + notesAdd[notesAdd.length - 1].text);
+    }
+    if(notesDel.length === 1) add('💌', '쪽지 삭제: ' + notesDel[0].text);
+    else if(notesDel.length > 1) add('💌', '쪽지 ' + notesDel.length + '개 삭제');
+
+    /* 📅 일정 */
+    var pEv = idMap(prev.events), nEv = idMap(next.events);
+    var evAdd = (next.events || []).filter(function(e){ return e && !pEv[e.id]; });
+    var evDel = (prev.events || []).filter(function(e){ return e && !nEv[e.id]; });
+    var evTxt = ['title','md','start','end','tm','tme','who'], evBool = ['star','priv','lunar'];
+    var evChg = (next.events || []).filter(function(e){
+      var o = e && pEv[e.id];
+      if(!o) return false;
+      return evTxt.some(function(k){ return !sameVal(o[k], e[k]); }) ||
+             evBool.some(function(k){ return !!o[k] !== !!e[k]; });
+    });
+    addGroup('📅', '일정 추가', evAdd, function(e){ return e.title; }, evDayText);
+    addGroup('📅', '일정 수정', evChg, function(e){ return e.title; }, evDayText);
+    addGroup('📅', '일정 삭제', evDel, function(e){ return e.title; });
+
+    /* 🤒 아플 때 기록 */
+    var pTemp = idMap(prev.temp);
+    addGroup('🤒', '아플 때 기록', (next.temp || []).filter(function(x){ return x && !pTemp[x.id]; }), function(x){
+      var parts = [];
+      if(x.temp) parts.push(x.temp + '℃');
+      if(x.med) parts.push(x.med);
+      if(x.memo) parts.push(x.memo);
+      return parts.length ? parts.join(' ') : '기록';
+    });
+
+    /* 🛒 장보기 */
+    var pShop = idMap(prev.shop && prev.shop.items), nShop = idMap(next.shop && next.shop.items);
+    var shopAdd = ((next.shop || {}).items || []).filter(function(it){ return it && !pShop[it.id]; });
+    var shopDel = ((prev.shop || {}).items || []).filter(function(it){ return it && !nShop[it.id]; });
+    var shopChk = ((next.shop || {}).items || []).filter(function(it){ var o = pShop[it.id]; return o && !!o.done !== !!it.done; });
+    addGroup('🛒', '장보기 추가', shopAdd, function(it){ return it.label; });
+    addGroup('🛒', '장보기에서 뺌', shopDel, function(it){ return it.label; });
+    if(shopChk.length){
+      var chkDone = shopChk.filter(function(it){ return !!it.done; }).map(function(it){ return it.label; });
+      var chkUndo = shopChk.filter(function(it){ return !it.done; }).map(function(it){ return it.label; });
+      if(chkDone.length) add('🛒', '장보기 체크' + (chkDone.length > 1 ? ' ' + chkDone.length + '개' : ': ' + chkDone[0]), chkDone.length > 1 ? shortList(chkDone) : '샀어요');
+      if(chkUndo.length) add('🛒', '장보기 체크 해제' + (chkUndo.length > 1 ? ' ' + chkUndo.length + '개' : ': ' + chkUndo[0]), chkUndo.length > 1 ? shortList(chkUndo) : '아직 안 샀어요');
+    }
+    var pMenu = (prev.shop && prev.shop.menu) || '', nMenu = (next.shop && next.shop.menu) || '';
+    if(pMenu !== nMenu && nMenu) add('🍽️', '오늘 메뉴: ' + nMenu.slice(0, 24));
+
+    /* 📝 할 일(루틴) */
+    var pR = idMap(prev.routines), nR = idMap(next.routines);
+    var rAdd = (next.routines || []).filter(function(r){ return r && !pR[r.id]; });
+    var rDel = (prev.routines || []).filter(function(r){ return r && !nR[r.id]; });
+    var rChg = (next.routines || []).filter(function(r){
+      var o = pR[r.id];
+      return o && (!sameVal(o.label, r.label) || !!o.pinned !== !!r.pinned);
+    });
+    addGroup('📝', '할 일 추가', rAdd, function(r){ return r.label; });
+    addGroup('📝', '할 일 수정', rChg, function(r){ return r.label; });
+    addGroup('📝', '할 일 삭제', rDel, function(r){ return r.label; });
+    function routineLabel(id){
+      var r = (next.routines || []).filter(function(x){ return x.id === id; })[0] ||
+              (prev.routines || []).filter(function(x){ return x.id === id; })[0];
+      return r ? r.label : '';
+    }
+    var pDone = (prev.done && prev.done[t]) || [], nDone = (next.done && next.done[t]) || [];
+    var doneAdd = nDone.filter(function(id){ return pDone.indexOf(id) < 0; });
+    var doneDel = pDone.filter(function(id){ return nDone.indexOf(id) < 0; });
+    if(doneAdd.length) add('✅', '오늘 체크 ' + doneAdd.length + '개', shortList(doneAdd.map(routineLabel)) || '할 일을 마쳤어요');
+    if(doneDel.length) add('↩️', '체크 해제 ' + doneDel.length + '개', shortList(doneDel.map(routineLabel)));
+
+    /* 🎒 어린이집 준비물 */
+    var pPrep = (prev.prep && prev.prep[t]) || [], nPrep = (next.prep && next.prep[t]) || [];
+    var prepAdd = nPrep.filter(function(id){ return pPrep.indexOf(id) < 0; });
+    if(prepAdd.length){
+      var prepNames = prepAdd.map(function(id){
+        var it = PREP_ITEMS.filter(function(x){ return x.id === id; })[0];
+        return it ? it.label : '';
+      });
+      add('🎒', '준비물 ' + prepAdd.length + '개 챙김', shortList(prepNames));
+    }
+
+    /* 🥛 살림 재고 */
+    var stShort = {milk: '우유', diaper: '기저귀', folate: '영양제'};
+    var stChanged = ['milk','diaper','folate'].filter(function(k){
+      return Number((prev.stock || {})[k] || 0) !== Number((next.stock || {})[k] || 0);
+    });
+    if(stChanged.length){
+      add('🥛', '살림 재고 바뀜', stChanged.map(function(k){
+        var m = STOCK_META[k] || {unit: ''};
+        return stShort[k] + ' ' + (Number(next.stock[k]) || 0) + (m.unit || '');
+      }).join(' · '));
+    }
+
+    /* 🏠 저축 · 🌟 버킷 */
+    var pSv = prev.savings || {}, nSv = next.savings || {};
+    if(Number(pSv.current || 0) !== Number(nSv.current || 0)) add('🏠', '저축 금액 바뀜: ' + won(nSv.current), '목표 ' + won(nSv.goal));
+    else if(Number(pSv.goal || 0) !== Number(nSv.goal || 0)) add('🏠', '저축 목표 바뀜: ' + won(nSv.goal));
+    var pB = idMap(prev.bucket);
+    var bAdd = (next.bucket || []).filter(function(b){ return b && !pB[b.id]; });
+    var bDone = (next.bucket || []).filter(function(b){ var o = pB[b.id]; return o && !o.done && !!b.done; });
+    addGroup('🌟', '버킷리스트 추가', bAdd, function(b){ return b.label; });
+    addGroup('🌟', '버킷리스트 이뤘어요', bDone, function(b){ return b.label; });
+
+    /* 📍 가족 상태 */
+    ['mom','dad','hyun'].forEach(function(k){
+      var o = (prev.members || {})[k] || {}, n = (next.members || {})[k] || {};
+      if(o.status && n.status && o.status !== n.status){
+        add(k === 'hyun' ? '🧸' : '📍', (MEMBER_META[k] ? MEMBER_META[k].name : whoLabel(k)) + ' 상태: ' + n.status);
+      }
+    });
+
+    /* 🩺 건강 · 🍚 식사 · 👏 칭찬 · 💰 용돈 */
+    var pHealth = idMap(prev.health);
+    addGroup('🩺', '건강 기록', (next.health || []).filter(function(x){ return x && !pHealth[x.id]; }), function(x){
+      return String((x.kind || '기록') + ' ' + (x.value || '')).replace(/\s+$/, '');
+    });
+    var pMeals = idMap(prev.meals);
+    addGroup('🍚', '식사 기록', (next.meals || []).filter(function(x){ return x && !pMeals[x.id]; }), function(x){ return x.text; });
+    var pPraise = idMap(prev.praise);
+    addGroup('👏', '칭찬 남김', (next.praise || []).filter(function(x){ return x && !pPraise[x.id]; }), function(x){ return x.text; });
+    var pMoney = prev.money || [], nMoney = next.money || [];
+    if(nMoney.length > pMoney.length){
+      addGroup('💰', '용돈 기록', nMoney.slice(pMoney.length), function(x){ return won(x.amount); },
+        function(x){ return x.note || (x.type === 'out' ? '썼어요' : '받았어요'); });
+    }
+
+    /* 💊 영양제 체크 */
+    var pF = (prev.briefing && prev.briefing.folic) || {}, nF = (next.briefing && next.briefing.folic) || {};
+    if(pF.date === t && nF.date === t){
+      var flip = [];
+      if(!!pF.mom !== !!nF.mom) flip.push('엄마 ' + (nF.mom ? '먹었어요' : '체크 해제'));
+      if(!!pF.dad !== !!nF.dad) flip.push('아빠 ' + (nF.dad ? '먹었어요' : '체크 해제'));
+      if(flip.length) add('💊', '영양제 체크', flip.join(' · '));
+    }
+
+    /* 나머지 메모·정보 */
+    if(!sameVal(prev.pedMemo, next.pedMemo)) add('🩺', '소아과 메모 바뀜');
+    if(!sameVal(prev.emergMemo, next.emergMemo)) add('🚑', '응급 메모 바뀜');
+    if(!sameVal(prev.shelter, next.shelter)) add('🏠', '대피소 메모 바뀜');
+    if(!jsonSame(prev.sizes, next.sizes)) add('📏', '사이즈 수첩 바뀜');
+    if(!jsonSame(prev.info, next.info)) add('📇', '가족 정보 바뀜');
+    if(!jsonSame(prev.shiftConfig, next.shiftConfig)) add('🗓️', '근무표 바뀜');
+
+    if(out.length > 6){
+      var rest = out.length - 6;
+      out = out.slice(0, 6);
+      out.push({icon: '🔔', title: '외 ' + rest + '건 더 바뀌었어요', sub: ''});
+    }
+    return out;
+  }
+
+  /* 알림 시트 */
+  function chgRowHTML(c, isNew){
+    return '<div class="chgRow ' + (isNew ? 'new' : 'read') + '">' +
+      '<span class="chgIcon">' + esc(c.icon || '🔔') + '</span>' +
+      '<span class="chgTxt"><b>' + esc(c.title) + '</b>' +
+        '<small>' + esc(agoLabel(c.at)) + (c.sub ? ' · ' + esc(c.sub) : '') + '</small></span>' +
+      (isNew ? '<i class="chgDot"></i>' : '') + '</div>';
+  }
+  function buildNotifBody(newIds){
+    newIds = newIds || [];
+    var rows = unreadChanges.map(function(c){ return chgRowHTML(c, newIds.indexOf(c.id) >= 0); }).join('');
+    var body = '<div class="chgHead"><b>상대 폰에서 온 새 소식</b>' +
+        (unreadCount() ? '<button class="miniBtn" data-act="notifReadAll">모두 읽음</button>'
+                       : '<span class="chgCount">' + (unreadChanges.length ? unreadChanges.length + '건' : '') + '</span>') +
+      '</div>';
+    body += rows ? '<div class="chgList">' + rows + '</div>'
+      : '<div class="chgEmpty">아직 새 소식이 없어요.<br>가족 폰에서 쪽지·일정·장보기를 바꾸면 여기에 쌓여요.</div>';
+    if(!(syncCfg && syncCfg.on)){
+      body += '<p class="appNote" style="margin-top:8px">지금은 실시간 동기화가 꺼져 있어 새 소식을 받지 않아요. ⚙️ 보호·정보에서 켜면 가족 폰의 변경이 여기로 와요.</p>';
+    }
+    var today = notifications().map(function(it){
+      return '<div class="moneyRow"><span class="moneyIcon">' + it.icon + '</span>' +
+        '<span class="moneyTxt">' + esc(it.text) + '</span></div>';
+    }).join('');
+    body += '<div class="chgHead"><b>오늘 챙길 것</b></div>' +
+      (today || '<div class="emptyCard">오늘 챙길 것이 없어요.</div>');
+    return body;
+  }
+  function renderNotifSheet(newIds){
+    var unread = (newIds || []).length;
+    openSheet('🔔 알림', unread ? '새 소식 ' + unread + '건이 와 있어요' : '가족 폰 소식과 오늘 챙길 것', buildNotifBody(newIds));
+    notifSheetOpen = true;
   }
 
   /* ---------------- render: record ---------------- */
@@ -2988,6 +3328,7 @@ body{position:relative}
     wrap.classList.add('hidden');
     wrap.innerHTML = '';
     document.body.classList.remove('sheetOpen');
+    notifSheetOpen = false;
     confirmCb = null;
   }
   function confirmSheet(title, msg, onOk, okLabel){
@@ -3302,13 +3643,11 @@ body{position:relative}
   }
 
   function sheetNotifications(){
-    var items = notifications();
-    var body = items.map(function(it){
-      return '<div class="moneyRow"><span class="moneyIcon">' + it.icon + '</span>' +
-        '<span class="moneyTxt">' + esc(it.text) + '</span></div>';
-    }).join('');
-    openSheet('🔔 알림', '오늘 챙길 것들을 모았어요', body || '<div class="emptyCard">알림이 없어요.</div>');
-    $('#bellBadge').style.display = 'none';
+    /* 새 소식이 없어도 '오늘 챙길 것'은 그대로 보여 준다.
+       여는 순간 읽음으로 바뀌어 배지가 0이 되고, 방금 온 줄은 빨간 점으로 남긴다. */
+    var newIds = unreadChanges.filter(function(c){ return !c.read; }).map(function(c){ return c.id; });
+    unreadMarkRead();
+    renderNotifSheet(newIds);
   }
 
   /* ---------------- export / import ---------------- */
@@ -3655,6 +3994,11 @@ body{position:relative}
         renderHome();
         break;
       case 'notifications': sheetNotifications(); break;
+      case 'notifReadAll':
+        unreadMarkRead();
+        renderNotifSheet([]);
+        toast('새 소식을 모두 읽음으로 표시했어요');
+        break;
       case 'statusSheet': sheetStatus(el.dataset.member); break;
       case 'setStatus': setStatus(el.dataset.member, el.dataset.status); break;
       case 'logCall': logCall(el.dataset.who); break;
@@ -3946,6 +4290,7 @@ body{position:relative}
     '<span class="cbChar c2" title="쿠리만쥬 · 아빠">' + avatar('dad', 34) + '</span>' +
     '<span class="cbChar c3" title="모몽가 · 아이">' + avatar('hyun', 34) + '</span>';
 
+  unreadLoad();
   renderAll();
   tick();
   setInterval(tick, 1000);
