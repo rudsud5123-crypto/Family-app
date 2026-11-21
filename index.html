@@ -2116,7 +2116,7 @@ body{position:relative}
     var items = shop.items || [];
     var left = items.filter(function(it){ return !it.done; }).length;
     return '<div class="card" style="margin-top:0">' +
-        '<div class="cardHead"><h2>🛒 사야 할 것</h2><span class="hint">' + (items.length ? (left ? left + '개 남았어요' : '다 샀어요 ✓') : '목록이 비어 있어요') + '</span></div>' +
+        '<div class="cardHead"><h2>🛒 냉장고 장보기</h2><span class="hint">' + (items.length ? (left ? left + '개 남았어요' : '다 샀어요 ✓') : '목록이 비어 있어요') + '</span></div>' +
         '<div class="noteForm"><input id="shopInput" type="text" maxlength="40" placeholder="예: 우유 200ml 2팩" autocomplete="off"><button class="noteSend" data-act="addShop">추가</button></div>' +
         '<ul class="checklist">' + (items.length ? items.map(function(it){
           return '<li class="' + (it.done ? 'done' : '') + '">' +
