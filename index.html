@@ -1850,7 +1850,7 @@ body{position:relative}
         '<label class="fld"><span>가족 방 이름</span><input id="syncRoom" type="text" maxlength="24" placeholder="예: 우리가족" value="' + esc(syncCfg ? syncCfg.room : '') + '" autocomplete="off"></label>' +
         '<label class="fld"><span>가족 암호 (4자 이상)</span><input id="syncPass" type="password" maxlength="40" placeholder="두 폰만 아는 암호" autocomplete="new-password"></label>' +
         '<button class="primaryBtn" data-act="syncStart">🔄 실시간 동기화 켜기</button>' +
-        '<p class="appNote" style="margin-top:8px">두 폰에 <b>같은 방 이름과 암호</b>를 넣으면 일정·쪽지·장보기가 서로 바로 보여요. 기록은 올리기 전에 이 폰에서 암호로 잠그고(AES&#8209;GCM), 서버에는 잠긴 내용만 올라가요.</p>';
+        '<p class="appNote" style="margin-top:8px">두 폰에 <b>같은 방 이름과 암호</b>를 넣으면 일정·쪽지·장보기가 서로 바로 보여요. 방 이름은 둘만 아는 단어로 정해 주세요. 기록은 올리기 전에 이 폰에서 암호로 잠그고(AES&#8209;GCM), 서버에는 잠긴 내용만 올라가요.</p>';
       return;
     }
     box.innerHTML =
