@@ -953,26 +953,27 @@ body{position:relative}
       </div>
 
       <div class="card">
-        <div class="cardHead"><h2>👪 우리 가족</h2><span class="hint">가족 위키에 적힌 내용</span></div>
+        <div class="cardHead"><h2>👪 우리 가족</h2><button class="miniBtn" data-act="editNames">✏️ 가족 이름 변경</button></div>
         <div id="famList"></div>
+        <p class="appNote" style="margin:2px 0 8px">여기서 바꾼 이름이 홈 카드·상태·기록 제목에 그대로 보여요. 실시간 동기화를 켜 두면 가족 폰에도 함께 바뀌어요.</p>
         <div class="famSub">양가 어른들 생신 <span class="chip lunar">음력</span></div>
         <div class="lunarGrid" id="elderGrid"></div>
         <p class="appNote" style="margin-top:9px">음력 생신은 해마다 양력 날짜가 달라져요. 일정 탭에서 그해 양력 날짜를 함께 확인해요.</p>
       </div>
 
       <div class="card">
-        <div class="cardHead"><h2>🧸 아이 생활 메모</h2><span class="hint">가족 위키</span></div>
+        <div class="cardHead"><h2 id="kidCardHead">🧸 아이 생활 메모</h2><span class="hint">가족 위키</span></div>
         <div id="kidList"></div>
       </div>
 
       <div class="card">
-        <div class="cardHead"><h2>🏥 아이 병원</h2><span class="hint">눌러서 바로 전화</span></div>
+        <div class="cardHead"><h2 id="hospCardHead">🏥 아이 병원</h2><span class="hint">눌러서 바로 전화</span></div>
         <div id="hospList"></div>
         <p class="appNote" id="hospNote" style="margin-top:7px"></p>
       </div>
 
       <div class="card">
-        <div class="cardHead"><h2>🩺 아이 소아과 진료 메모</h2><span class="hint">의사 선생님께 그대로</span></div>
+        <div class="cardHead"><h2 id="pediCardHead">🩺 아이 소아과 진료 메모</h2><span class="hint">의사 선생님께 그대로</span></div>
         <p class="cardSub">열 난 날·먹은 약·못 먹는 음식(회·해산물·내장)을 적어 두고 병원에서 보여 주세요.</p>
         <div id="pediBox"></div>
       </div>
@@ -1089,6 +1090,37 @@ body{position:relative}
   };
   var SEEDS = [];
   var WHO_NAME = {hyun:'아이', mom:'엄마', dad:'아빠', family:'우리 모두'};
+  /* 화면에 보이는 이름 — state.info.family에 그 사람(who)의 이름이 있으면 그것, 없으면 기본값(아이·엄마·아빠) */
+  function memberName(who){
+    if(!who) return '';
+    var fam = (state && state.info && Array.isArray(state.info.family)) ? state.info.family : [];
+    for(var i = 0; i < fam.length; i++){
+      var f = fam[i];
+      if(f && f.who === who){
+        var n = String(f.name == null ? '' : f.name).trim();
+        if(n) return n;
+        break;
+      }
+    }
+    return WHO_NAME[who] || '';
+  }
+  /* 받침에 따라 '이/가' — '지훈이', '지우가' */
+  function josaGa(name){
+    var n = String(name == null ? '' : name).trim();
+    if(!n) return '가';
+    var c = n.charCodeAt(n.length - 1);
+    if(c < 0xAC00 || c > 0xD7A3) return '가';
+    return ((c - 0xAC00) % 28) ? '이' : '가';
+  }
+  /* state.info.family에 저장된 이름 그대로(비어 있을 수 있음) — 이름 입력칸 초기값에 쓴다 */
+  function storedName(who){
+    var fam = (state && state.info && Array.isArray(state.info.family)) ? state.info.family : [];
+    for(var i = 0; i < fam.length; i++){
+      var f = fam[i];
+      if(f && f.who === who) return String(f.name == null ? '' : f.name);
+    }
+    return '';
+  }
   /* 아이 생일 — 어린이집 준비물·예방접종 D-day 계산에 쓴다. 공개용 빌드에서는 비운다 */
   var KID_BIRTH = '';
   var PREP_ITEMS = [
@@ -1145,7 +1177,7 @@ body{position:relative}
     };
   }
   function evWho(e){ return (e && WHO_NAME[e.who]) ? e.who : ''; }
-  function whoName(w){ return WHO_NAME[w] || ''; }
+  function whoName(w){ return memberName(w); }
   var GCAL = [];
 
   function pad(n){ return String(n).padStart(2,'0'); }
@@ -1361,6 +1393,17 @@ body{position:relative}
     if(!raw || typeof raw !== 'object') return def;
     var out = Object.assign({}, def, raw);
     ['family','elders','hospitals','kid'].forEach(function(k){ if(!Array.isArray(out[k])) out[k] = []; });
+    /* 구성원 이름은 mom·dad·hyun 세 사람 것만, 짧은 문자열로 — 동기화·불러오기 데이터도 같은 모양으로 맞춘다 */
+    out.family = out.family.filter(function(f){
+      return f && typeof f === 'object' && (f.who === 'mom' || f.who === 'dad' || f.who === 'hyun');
+    }).slice(0, 6).map(function(f){
+      return {
+        who: f.who,
+        name: (typeof f.name === 'string' ? f.name.replace(/\s+/g, ' ').trim().slice(0, 12) : ''),
+        role: (typeof f.role === 'string' ? f.role.slice(0, 12) : ''),
+        note: (typeof f.note === 'string' ? f.note.slice(0, 200) : '')
+      };
+    });
     out.home = Object.assign({}, (def && def.home) || {}, raw.home || {});
     out.couple = Object.assign({}, (def && def.couple) || {}, raw.couple || {});
     return out;
@@ -2025,7 +2068,7 @@ body{position:relative}
     var st = STATUS_LIST.filter(function(s){ return s.label === m.status; })[0] || {label:m.status, icon:'💬'};
     return '<button class="member ' + meta.cls + '" data-act="statusSheet" data-member="' + key + '">' +
       '<span class="mTop"><span class="mAvatar">' + avatar(meta.kind, 28) + '</span>' +
-      '<span class="mNameWrap"><span class="mName">' + meta.name + '</span>' +
+      '<span class="mNameWrap"><span class="mName">' + esc(memberName(key)) + '</span>' +
       '<span class="mAgo">' + (m.at ? relTime(m.at) + ' 바꿈' : '새로 시작') + '</span></span></span>' +
       '<span class="mStatus">' + st.icon + ' ' + esc(st.label) + '</span>' +
       fortuneLineHTML(key) +
@@ -2036,7 +2079,7 @@ body{position:relative}
     return ['mom','dad'].map(function(k){
       var isMom = k === 'mom';
       var num = state.settings.contacts[k];
-      var label = isMom ? '엄마' : '아빠';
+      var label = memberName(k) || (isMom ? '엄마' : '아빠');
       var tel = fmtPhone(num);
       var buttons = num
         ? '<a class="miniBtn" href="tel:' + num + '" data-act="logCall" data-who="' + label + '에게 전화">📞 전화</a>' +
@@ -2180,19 +2223,20 @@ body{position:relative}
     $('#callRows').innerHTML = contactRowsHTML();
 
     var momNum = state.settings.contacts.mom;
+    var momName = memberName('mom') || '엄마';
     var prim = $('#callPrimary');
     if(momNum){
       prim.setAttribute('href', 'tel:' + momNum);
       prim.classList.remove('disabled');
       prim.setAttribute('data-act', 'logCall');
-      prim.setAttribute('data-who', '엄마에게 전화');
-      prim.innerHTML = '📞 엄마에게 전화';
+      prim.setAttribute('data-who', momName + '에게 전화');
+      prim.innerHTML = '📞 ' + esc(momName) + '에게 전화';
     } else {
       prim.removeAttribute('href');
       prim.classList.add('disabled');
       prim.setAttribute('data-act', 'editContact');
       prim.setAttribute('data-who', 'mom');
-      prim.innerHTML = '엄마 번호를 등록해 주세요';
+      prim.innerHTML = esc(momName) + ' 번호를 등록해 주세요';
     }
     var hero = $('#heroCard');
     hero.classList.toggle('collapsed', !state.settings.heroOpen);
@@ -2258,7 +2302,7 @@ body{position:relative}
     var prog = routineProgress();
     items.push({icon:'🌙', text:'오늘 루틴 ' + prog.done + '/' + prog.total + '개 완료' + (prog.total - prog.done > 0 ? ' · ' + (prog.total-prog.done) + '개 남았어요' : ' · 다 했어요!')});
     if(state.members.hyun.status === '어린이집'){
-      items.push({icon:'🧸', text:'아이가 어린이집에 있어요. 하원은 15:00이에요.'});
+      items.push({icon:'🧸', text:(memberName('hyun') || '아이') + josaGa(memberName('hyun') || '아이') + ' 어린이집에 있어요. 하원은 15:00이에요.'});
     }
     if(state.settings.lastSync){
       items.push({icon:'💾', text:'마지막 저장 ' + timeLabel(state.settings.lastSync)});
@@ -2355,9 +2399,7 @@ body{position:relative}
     return head.join(' · ') + (more > 0 ? ' 외 ' + more + '개' : '');
   }
   function whoLabel(who){
-    if(who === 'dad') return '아빠';
-    if(who === 'mom') return '엄마';
-    return WHO_NAME[who] || '가족';
+    return memberName(who) || '가족';
   }
   function evDayText(e){
     if(!e) return '';
@@ -2496,7 +2538,7 @@ body{position:relative}
     ['mom','dad','hyun'].forEach(function(k){
       var o = (prev.members || {})[k] || {}, n = (next.members || {})[k] || {};
       if(o.status && n.status && o.status !== n.status){
-        add(k === 'hyun' ? '🧸' : '📍', (MEMBER_META[k] ? MEMBER_META[k].name : whoLabel(k)) + ' 상태: ' + n.status);
+        add(k === 'hyun' ? '🧸' : '📍', whoLabel(k) + ' 상태: ' + n.status);
       }
     });
 
@@ -2704,7 +2746,7 @@ body{position:relative}
     var inf = state.info || {};
     var kid = (inf.family || []).filter(function(f){ return f.who === 'hyun'; })[0] || {};
     var prim = (inf.hospitals || []).filter(function(h){ return h.tag === 'now'; })[0] || (inf.hospitals || []).filter(function(h){ return !h.emerg && !h.sub; })[0];
-    return '<div class="kidStrip"><span class="kAva">' + avatar('hyun', 36) + '</span><div><b>' + esc(kid.name || '우리 아이') + '</b>' +
+    return '<div class="kidStrip"><span class="kAva">' + avatar('hyun', 36) + '</span><div><b>' + esc(String(kid.name || '').trim() || memberName('hyun') || '우리 아이') + '</b>' +
         '<small>' + esc(kid.note || inf.daycare || '') + '</small></div></div>' +
       (prim && prim.tel ? '<div class="hospitalCard">' +
         '<div class="hospTop"><span class="hospIcon">🏥</span><div><div class="hospName">' + esc(prim.name) + '</div>' +
@@ -2723,12 +2765,13 @@ body{position:relative}
   }
   function praiseHTML(){
     var list = state.praise.slice().reverse();
-    return '<div class="sectionHead"><h2>아이 칭찬</h2><span class="sectionSub">' + list.length + '개 모았어요</span></div>' +
+    var cn = memberName('hyun') || '아이';
+    return '<div class="sectionHead"><h2>' + esc(cn) + ' 칭찬</h2><span class="sectionSub">' + list.length + '개 모았어요</span></div>' +
       (list.length ? list.map(function(p){
         return '<div class="praiseCard"><div class="praiseTxt">⭐ ' + esc(p.text) + '</div>' +
           '<div class="praiseMeta"><span>' + esc(p.date) + '</span>' +
           '<button class="xBtn" data-act="delPraise" data-id="' + p.id + '" aria-label="삭제">✕</button></div></div>';
-      }).join('') : '<div class="emptyCard">오늘 아이가 잘한 일을<br>한 줄로 남겨 보세요.</div>') +
+      }).join('') : '<div class="emptyCard">오늘 ' + esc(cn) + josaGa(cn) + ' 잘한 일을<br>한 줄로 남겨 보세요.</div>') +
       '<button class="addWide" data-act="addPraise">+ 칭찬 남기기</button>';
   }
   function moneyHTML(){
@@ -2736,7 +2779,7 @@ body{position:relative}
       return sum + (m.type === 'out' ? -Number(m.amount || 0) : Number(m.amount || 0));
     }, 0);
     var list = state.money.slice().reverse();
-    return '<div class="balanceCard"><div class="balanceLabel">아이 용돈 잔액</div>' +
+    return '<div class="balanceCard"><div class="balanceLabel">' + esc(memberName('hyun') || '아이') + ' 용돈 잔액</div>' +
       '<div class="balanceValue">' + balance.toLocaleString('ko-KR') + '원</div></div>' +
       (list.length ? list.map(function(m){
         var out = m.type === 'out';
@@ -2772,7 +2815,8 @@ body{position:relative}
     var sel = $('#noteWhoSel');
     if(sel){
       sel.innerHTML = ['mom','dad'].map(function(k){
-        return '<button class="nWho ' + (k === who ? 'on' : '') + '" data-act="noteWho" data-who="' + k + '" aria-label="' + (k === 'mom' ? '엄마' : '아빠') + '가 남겨요">' + (k === 'mom' ? '엄마' : '아빠') + '</button>';
+        var nm = memberName(k) || (k === 'mom' ? '엄마' : '아빠');
+        return '<button class="nWho ' + (k === who ? 'on' : '') + '" data-act="noteWho" data-who="' + k + '" aria-label="' + esc(nm) + josaGa(nm) + ' 남겨요">' + esc(nm) + '</button>';
       }).join('');
     }
     var box = $('#noteList');
@@ -2782,7 +2826,7 @@ body{position:relative}
       ? list.slice(0, 6).map(function(n){
           var w = n.who === 'dad' ? 'dad' : 'mom';
           return '<div class="noteRow ' + w + '">' +
-            '<span class="noteWho">' + (w === 'mom' ? '엄마' : '아빠') + '</span>' +
+            '<span class="noteWho">' + esc(memberName(w) || (w === 'mom' ? '엄마' : '아빠')) + '</span>' +
             '<span class="noteText">' + esc(n.text) + '</span>' +
             '<span class="noteWhen">' + noteWhen(n.at) + '</span>' +
             '<button class="noteDel" data-act="delNote" data-id="' + n.id + '" aria-label="지우기">✕</button></div>';
@@ -2990,7 +3034,7 @@ body{position:relative}
     box.innerHTML = ['hyun','mom','dad'].map(function(k){
       var s = (state.sizes && state.sizes[k]) || {};
       return '<div class="sizeCard ' + k + '">' +
-        '<div class="sizeHead"><span class="sizeName">' + esc(WHO_NAME[k]) + '</span>' +
+        '<div class="sizeHead"><span class="sizeName">' + esc(memberName(k)) + '</span>' +
           '<button class="sizeEdit" data-act="editSize" data-who="' + k + '">수정</button></div>' +
         '<div class="sizeRows">' + (SIZE_FIELDS[k] || []).map(function(f){
           return '<div class="sizeRow"><span class="sizeKey">' + f[1] + '</span><span class="sizeVal ' + (s[f[0]] ? '' : 'none') + '">' + (s[f[0]] ? esc(s[f[0]]) : '—') + '</span></div>';
@@ -3206,10 +3250,16 @@ body{position:relative}
   function renderInfo(){
     var inf = state.info || {};
     var fam = $('#famList');
+    var kidName = memberName('hyun') || '아이';
+    var kHead = $('#kidCardHead'); if(kHead) kHead.textContent = '🧸 ' + kidName + ' 생활 메모';
+    var hHead = $('#hospCardHead'); if(hHead) hHead.textContent = '🏥 ' + kidName + ' 병원';
+    var pHead = $('#pediCardHead'); if(pHead) pHead.textContent = '🩺 ' + kidName + ' 소아과 진료 메모';
     if(fam){
       var rows = (inf.family || []).map(function(f){
+        var nm = String(f.name == null ? '' : f.name).trim() || memberName(f.who) || '가족';
+        var role = String(f.role == null ? '' : f.role).trim();
         return '<div class="famRow"><span class="famAva">' + (WHO_NAME[f.who] ? avatar(f.who, 28) : '👤') + '</span>' +
-          '<span class="famMain"><b>' + esc(f.name) + '</b> · ' + esc(f.role || '') + '<small>' + esc(f.note || '') + '</small></span></div>';
+          '<span class="famMain"><b>' + esc(nm) + '</b>' + (role ? ' · ' + esc(role) : '') + '<small>' + esc(f.note || '') + '</small></span></div>';
       });
       if(inf.couple && (inf.couple.wedding || inf.couple.report || inf.couple.love)){
         var coupleBits = [];
@@ -3287,8 +3337,9 @@ body{position:relative}
     $('#lockNowBtn').style.display = st.pinHash ? 'flex' : 'none';
     renderSync();
 
-    $('#momInfo').innerHTML = '엄마 ' + (fmtPhone(st.contacts.mom) ? '<a href="tel:' + st.contacts.mom + '" data-act="logCall" data-who="엄마에게 전화">' + fmtPhone(st.contacts.mom) + '</a>' : '번호 없음') + '<small>눌러서 전화</small>';
-    $('#dadInfo').innerHTML = '아빠 ' + (fmtPhone(st.contacts.dad) ? '<a href="tel:' + st.contacts.dad + '" data-act="logCall" data-who="아빠에게 전화">' + fmtPhone(st.contacts.dad) + '</a>' : '번호를 등록해 주세요') + '<small>가족이 함께 쓰는 연락처</small>';
+    var momNm = esc(memberName('mom') || '엄마'), dadNm = esc(memberName('dad') || '아빠');
+    $('#momInfo').innerHTML = momNm + ' ' + (fmtPhone(st.contacts.mom) ? '<a href="tel:' + st.contacts.mom + '" data-act="logCall" data-who="' + momNm + '에게 전화">' + fmtPhone(st.contacts.mom) + '</a>' : '번호 없음') + '<small>눌러서 전화</small>';
+    $('#dadInfo').innerHTML = dadNm + ' ' + (fmtPhone(st.contacts.dad) ? '<a href="tel:' + st.contacts.dad + '" data-act="logCall" data-who="' + dadNm + '에게 전화">' + fmtPhone(st.contacts.dad) + '</a>' : '번호를 등록해 주세요') + '<small>가족이 함께 쓰는 연락처</small>';
 
     var calls = state.calls;
     $('#callList').innerHTML = calls.length
@@ -3303,10 +3354,26 @@ body{position:relative}
   }
 
   function renderAll(){
+    renderCharStrip();
     renderHome();
     renderRecord();
     renderCalendar();
     renderSafe();
+  }
+  /* 히어로·달력 배너 캐릭터 이름표도 가족 이름을 따라간다 */
+  function renderCharStrip(){
+    var hc = $('#heroChars');
+    if(hc) hc.innerHTML =
+      '<span class="spark s1">✨</span>' +
+      '<span class="heroChar c1">' + avatar('hyun', 72) + '</span>' +
+      '<span class="heroChar c2">' + avatar('mom', 78) + '</span>' +
+      '<span class="heroChar c3">' + avatar('dad', 72) + '</span>' +
+      '<span class="spark s2">🎉</span>';
+    var cb = $('#calBandChars');
+    if(cb) cb.innerHTML =
+      '<span class="cbChar c1" title="치이카와 · ' + esc(memberName('mom')) + '">' + avatar('mom', 34) + '</span>' +
+      '<span class="cbChar c2" title="쿠리만쥬 · ' + esc(memberName('dad')) + '">' + avatar('dad', 34) + '</span>' +
+      '<span class="cbChar c3" title="모몽가 · ' + esc(memberName('hyun')) + '">' + avatar('hyun', 34) + '</span>';
   }
 
   /* ---------------- sheet ---------------- */
@@ -3345,13 +3412,13 @@ body{position:relative}
       return '<button class="statusOpt ' + (m.status === s.label ? 'on' : '') + '" data-act="setStatus" data-member="' + key + '" data-status="' + s.label + '">' +
         '<span>' + s.icon + ' ' + s.label + '</span>' + (m.status === s.label ? '<em>지금</em>' : '') + '</button>';
     }).join('') + '</div>';
-    openSheet(MEMBER_META[key].name + ' 상태 바꾸기', '지금 어디에 있는지 가족에게 보여요', body);
+    openSheet(esc(memberName(key)) + ' 상태 바꾸기', '지금 어디에 있는지 가족에게 보여요', body);
   }
   function setStatus(key, label){
     if(!state.members[key]) return;
     state.members[key] = {status: label, at: new Date().toISOString()};
     closeSheet();
-    commit(MEMBER_META[key].name + ' 상태를 "' + label + '"(으)로 바꿨어요');
+    commit(memberName(key) + ' 상태를 "' + label + '"(으)로 바꿨어요');
   }
 
   function sheetRoutine(id){
@@ -3395,7 +3462,7 @@ body{position:relative}
         '<button class="quickChip" data-act="fillMeal" data-text="이유식 한 그릇">🍚 이유식 한 그릇</button>' +
       '</div>' +
       '<button class="primaryBtn" data-act="saveMeal">기록하기</button>';
-    openSheet('식사 기록', '오늘 아이가 먹은 것', body);
+    openSheet('식사 기록', '오늘 ' + esc(memberName('hyun') || '아이') + josaGa(memberName('hyun') || '아이') + ' 먹은 것', body);
     setTimeout(function(){ var el = $('#fText'); if(el) el.focus(); }, 120);
   }
 
@@ -3414,7 +3481,7 @@ body{position:relative}
     var body = '<label class="fld"><span>오늘 칭찬할 일</span>' +
         '<textarea id="fText" maxlength="200" placeholder="예: 장난감을 스스로 정리했어요. 기특해!"></textarea></label>' +
       '<button class="primaryBtn" data-act="savePraise">칭찬 남기기</button>';
-    openSheet('아이 칭찬', '한 줄이면 충분해요', body);
+    openSheet(esc(memberName('hyun') || '아이') + ' 칭찬', '한 줄이면 충분해요', body);
     setTimeout(function(){ var el = $('#fText'); if(el) el.focus(); }, 120);
   }
 
@@ -3423,7 +3490,7 @@ body{position:relative}
       '<label class="fld"><span>금액</span><input id="fAmount" type="number" min="0" step="100" placeholder="예: 1000"></label>' +
       '<label class="fld"><span>메모 (선택)</span><input id="fNote" type="text" maxlength="40" placeholder="예: 할머니께 받은 세뱃돈"></label>' +
       '<button class="primaryBtn" data-act="saveMoney">기록하기</button>';
-    openSheet('용돈 기록', '아이 통장 대신 여기에', body);
+    openSheet('용돈 기록', esc(memberName('hyun') || '아이') + ' 통장 대신 여기에', body);
   }
 
   function sheetSavings(){
@@ -3516,7 +3583,7 @@ body{position:relative}
     var body = (SIZE_FIELDS[who] || SIZE_FIELDS.hyun).map(function(f){
       return '<label class="fld"><span>' + f[1] + '</span><input id="sz_' + f[0] + '" type="text" maxlength="40" value="' + esc(s[f[0]] || '') + '"></label>';
     }).join('') + '<button class="primaryBtn" data-act="saveSize" data-who="' + who + '">저장</button>';
-    openSheet('👕 ' + (WHO_NAME[who] || '') + ' 사이즈·취향', '옷·신발 사이즈와 입맛을 적어 두세요', body);
+    openSheet('👕 ' + (memberName(who) || '') + ' 사이즈·취향', '옷·신발 사이즈와 입맛을 적어 두세요', body);
   }
   function saveSize(who){
     if(!state.sizes) state.sizes = {};
@@ -3568,12 +3635,49 @@ body{position:relative}
 
   function sheetContact(who){
     var isMom = who === 'mom';
-    var body = '<label class="fld"><span>' + (isMom ? '엄마' : '아빠') + ' 휴대폰 번호</span>' +
+    var body = '<label class="fld"><span>' + esc(memberName(who) || (isMom ? '엄마' : '아빠')) + ' 휴대폰 번호</span>' +
         '<input id="fPhone" type="tel" inputmode="numeric" maxlength="13" placeholder="010-0000-0000" value="' + fmtPhone(state.settings.contacts[who]) + '"></label>' +
       '<p class="pinHint" style="text-align:left">번호는 이 기기에만 저장돼요. 비워 두면 전화 버튼이 숨겨져요.</p>' +
       '<button class="primaryBtn" data-act="saveContact" data-who="' + who + '">저장</button>';
     openSheet('연락처 수정', '가족 전화 바로 걸기', body);
     setTimeout(function(){ var el = $('#fPhone'); if(el) el.focus(); }, 120);
+  }
+
+  /* ✏️ 가족 이름 — state.info.family에 저장하면 홈 카드·상태·기록 제목이 바로 바뀐다 (동기화에도 함께 올라간다) */
+  function sheetNames(){
+    var roles = [['hyun','아이'], ['mom','엄마'], ['dad','아빠']];
+    var body = '<p class="pinHint" style="text-align:left;margin-bottom:8px">여기 적은 이름이 홈 카드·상태·기록 제목에 그대로 보여요. 비워 두면 ' +
+        esc(WHO_NAME.hyun || '아이') + ' · ' + esc(WHO_NAME.mom || '엄마') + ' · ' + esc(WHO_NAME.dad || '아빠') + '로 보여요.</p>' +
+      roles.map(function(r){
+        var k = r[0], def = WHO_NAME[k] || r[1];
+        return '<label class="fld"><span>' + esc(r[1]) + ' 이름</span>' +
+          '<input id="nm_' + k + '" type="text" maxlength="12" placeholder="비우면 ' + esc(def) + '로 보여요" value="' + esc(storedName(k)) + '"></label>';
+      }).join('') +
+      '<p class="pinHint" style="text-align:left">실시간 동기화를 켜 두면 가족 폰에도 함께 바뀌어요.</p>' +
+      '<button class="primaryBtn" data-act="saveNames">저장</button>';
+    openSheet('✏️ 가족 이름', '홈에 보이는 이름을 바꿔요', body);
+    setTimeout(function(){ var el = $('#nm_hyun'); if(el) el.focus(); }, 120);
+  }
+  function saveNames(){
+    if(!state.info) state.info = {};
+    if(!Array.isArray(state.info.family)) state.info.family = [];
+    var changed = [];
+    ['hyun','mom','dad'].forEach(function(k){
+      var el = $('#nm_' + k);
+      if(!el) return;
+      var v = String(el.value || '').replace(/\s+/g, ' ').trim().slice(0, 12);
+      var f = null;
+      for(var i = 0; i < state.info.family.length; i++){
+        if(state.info.family[i] && state.info.family[i].who === k){ f = state.info.family[i]; break; }
+      }
+      if(!f){ f = {who:k, name:'', role:'', note:''}; state.info.family.push(f); }
+      if(String(f.name || '') !== v){ f.name = v; changed.push(k); }
+    });
+    closeSheet();
+    if(!changed.length){ toast('바뀐 이름이 없어요'); return; }
+    var cleared = changed.filter(function(k){ return !String(storedName(k) || '').trim(); });
+    if(cleared.length) commit('이름을 비워서 기본 표기로 보여요');
+    else commit(changed.length > 1 ? '가족 이름을 저장했어요' : (memberName(changed[0]) || '가족') + ' 이름을 저장했어요');
   }
 
   function hashPin(pin){
@@ -4008,6 +4112,8 @@ body{position:relative}
         renderSafe();
         break;
       case 'editContact': sheetContact(el.dataset.who); break;
+      case 'editNames': sheetNames(); break;
+      case 'saveNames': saveNames(); break;
       case 'saveContact': {
         var digits = String($('#fPhone') ? $('#fPhone').value : '').replace(/[^0-9]/g,'');
         state.settings.contacts[el.dataset.who] = digits;
@@ -4278,16 +4384,6 @@ body{position:relative}
   $('#recordIcon').innerHTML = avatar('hyun', 42);
   $('#calIcon').innerHTML = avatar('dad', 42);
   $all('[data-ava]').forEach(function(el){ el.innerHTML = avatar(el.dataset.ava, 28); });
-  $('#heroChars').innerHTML =
-    '<span class="spark s1">✨</span>' +
-    '<span class="heroChar c1">' + avatar('hyun', 72) + '</span>' +
-    '<span class="heroChar c2">' + avatar('mom', 78) + '</span>' +
-    '<span class="heroChar c3">' + avatar('dad', 72) + '</span>' +
-    '<span class="spark s2">🎉</span>';
-  $('#calBandChars').innerHTML =
-    '<span class="cbChar c1" title="치이카와 · 엄마">' + avatar('mom', 34) + '</span>' +
-    '<span class="cbChar c2" title="쿠리만쥬 · 아빠">' + avatar('dad', 34) + '</span>' +
-    '<span class="cbChar c3" title="모몽가 · 아이">' + avatar('hyun', 34) + '</span>';
 
   unreadLoad();
   renderAll();
