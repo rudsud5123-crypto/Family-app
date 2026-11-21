@@ -2754,11 +2754,10 @@ body{position:relative}
     else if(subTab === 'meal') body.innerHTML = mealHTML();
     else if(subTab === 'health') body.innerHTML = healthHTML();
     else if(subTab === 'praise') body.innerHTML = praiseHTML();
-    if(subTab === 'shop') body.innerHTML = shopHTML();
+    else if(subTab === 'shop') body.innerHTML = shopHTML();
     else if(subTab === 'bucket') body.innerHTML = bucketHTML();
     else if(subTab === 'temp') body.innerHTML = tempHTML();
     else if(subTab === 'money') body.innerHTML = moneyHTML();
-    else body.innerHTML = moneyHTML();
   }
 
   /* ---------------- render: 새 카드 (쪽지 · 저축 · 장보기 · 버킷 · 컨디션 · 진료메모 · 생존가방 · 사이즈) ---------------- */
