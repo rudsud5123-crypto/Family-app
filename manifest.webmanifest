@@ -1,0 +1,32 @@
+{
+  "name": "우리 가족",
+  "short_name": "우리 가족",
+  "description": "가족과 함께 쓰는 기록장 — 루틴, 식사, 일정, 병원 연락처",
+  "lang": "ko",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#DFEDC6",
+  "theme_color": "#DFEDC6",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
