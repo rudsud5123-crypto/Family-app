@@ -464,6 +464,17 @@ li.done .rLabel{color:#B7A6A0;text-decoration:line-through}
 .callLogWhen{font-size:10.5px;color:#B5A493}
 .appNote{font-size:11px;color:#9E8A76;line-height:1.6}
 
+/* ---------- 가족 동기화 배지 ---------- */
+.syncPill{display:inline-flex;align-items:center;justify-content:center;height:26px;padding:0 8px;border-radius:99px;background:#FFFDF6;border:1px solid #F0E4C8;font-size:9.5px;font-weight:800;color:#A6927E;white-space:nowrap;font-family:inherit}
+.syncPill.on{background:#E9F7ED;border-color:#C7E8D2;color:#3A8A5B}
+.syncPill.warn{background:#FFF6E6;border-color:#F3E3BE;color:#A9762B}
+.syncPill.err{background:#FFE9E9;border-color:#F6C9C9;color:#B83B2E}
+.syncBox .fld{margin-top:8px}
+.syncBox .fld>span{display:block;font-size:10px;font-weight:800;color:#8A7458;margin-bottom:4px}
+.syncBox .fld input{width:100%;height:42px;border-radius:12px;border:1.5px solid #F0E4C8;background:#FFFDF6;padding:0 11px;font-size:12.5px;color:#6A5544;font-family:inherit}
+.syncBox .fld input:focus{outline:none;border-color:#F0C978;box-shadow:0 0 0 3px rgba(240,201,120,.18)}
+.syncBox .primaryBtn{margin-top:10px}
+
 /* ---------- tabbar ---------- */
 .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;justify-content:center;pointer-events:none}
 .tabInner{
@@ -755,6 +766,7 @@ body{position:relative}
       <span class="brandText">우리 가족</span>
     </div>
     <div class="topActions">
+      <button class="syncPill off" id="syncPill" data-act="tab" data-tab="safe" title="가족 실시간 동기화">동기화 끔</button>
       <button class="roundBtn" data-act="notifications" aria-label="알림">
         <span aria-hidden="true">🔔</span><span class="badge" id="bellBadge">0</span>
       </button>
@@ -917,6 +929,12 @@ body{position:relative}
           <button class="ghostBtn2" data-act="importBackup">불러오기</button>
         </div>
         <button class="ghostBtn2" id="lockNowBtn" data-act="lockNow">🔒 지금 잠그기</button>
+      </div>
+
+      <div class="card" id="syncCard">
+        <div class="cardHead"><h2>🔄 실시간 동기화</h2><span class="hint" id="syncStateHint">꺼짐</span></div>
+        <p class="cardSub">같은 방 이름·암호를 두 폰에 넣으면 일정·쪽지·장보기가 서로 바로 보여요.</p>
+        <div class="syncBox" id="syncBox"></div>
       </div>
 
       <div class="card">
@@ -1530,6 +1548,7 @@ body{position:relative}
       toast('이 브라우저에는 저장할 수 없어요');
     }
     updateSyncLabel();
+    scheduleSyncPush();
   }
   function commit(msg){
     save();
@@ -1538,7 +1557,317 @@ body{position:relative}
   }
   function updateSyncLabel(){
     var el = $('#syncTime');
-    if(el) el.textContent = '최근 동기화 ' + timeLabel(state.settings.lastSync) + ' · 자동 저장 켜짐';
+    if(!el) return;
+    var st = syncInfo.status;
+    if(syncCfg && syncCfg.on && st === 'badkey'){
+      el.textContent = '🔴 암호가 달라요 · 이 기기 저장 ' + timeLabel(state.settings.lastSync);
+    } else if(syncCfg && syncCfg.on && st === 'error'){
+      el.textContent = '🔴 연결 오류 · 이 기기 저장 ' + timeLabel(state.settings.lastSync);
+    } else if(syncCfg && syncCfg.on && syncOnline){
+      el.textContent = '🟢 실시간 동기화 연결됨 · ' + (syncInfo.lastAt ? timeLabel(new Date(syncInfo.lastAt).toISOString()) : timeLabel(state.settings.lastSync));
+    } else if(syncCfg && syncCfg.on){
+      el.textContent = '🟡 연결 중… · 이 기기 저장 ' + timeLabel(state.settings.lastSync);
+    } else {
+      el.textContent = '이 기기에만 저장 · 최근 ' + timeLabel(state.settings.lastSync);
+    }
+  }
+
+  /* ---------------- 가족 실시간 동기화 (Firebase Realtime Database + AES-GCM) ----------------
+     · 방 이름 → 방 경로(방 하나에 칸 하나), 방 이름+암호 → PBKDF2 15만 회 → AES-GCM 256 키
+     · 서버에는 암호화된 덩어리(ct·iv)만 올라간다. 기기 안에서는 지금처럼 localStorage에 저장된다.
+     · 아래 firebaseConfig는 웹 앱의 공개 식별자이고 비밀 키가 아니다. */
+  var SYNC_FIREBASE = {
+    apiKey: 'AIzaSyAp-3FeTYd7ucVLlG7uIyA9bIcIIG2t0cg',
+    authDomain: 'our-family-app-aefb0.firebaseapp.com',
+    databaseURL: 'https://our-family-app-aefb0-default-rtdb.asia-southeast1.firebasedatabase.app',
+    projectId: 'our-family-app-aefb0',
+    storageBucket: 'our-family-app-aefb0.firebasestorage.app',
+    messagingSenderId: '1030877906947',
+    appId: '1:1030877906947:web:fac92c0c9806ac4a73a636'
+  };
+  var SYNC_SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
+  var SYNC_STORE = 'familyRecordApp.sync.v1';
+  var SYNC_ITER = 150000;
+  var syncCfg = null, syncKey = null, syncRoomCode = '', syncRef = null, syncDb = null;
+  var syncOnline = false, syncApplying = false, syncBusy = false, syncTimer = null;
+  var syncAppliedTs = 0, syncLastHash = '', syncNeedInit = false, syncToastAt = 0;
+  var syncInfo = {status:'off', lastAt:0, lastBy:'', err:''};
+
+  function syncSafeRoom(room){ return String(room || '').replace(/[\s\u200b]+/g, '').toLowerCase(); }
+  function syncAvailable(){ return !!(window.crypto && window.crypto.subtle && window.TextEncoder); }
+  function syncHex(buf){ return Array.prototype.map.call(new Uint8Array(buf), function(b){ return ('0' + b.toString(16)).slice(-2); }).join(''); }
+  function syncB64(buf){ var a = new Uint8Array(buf), s = ''; for(var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]); return btoa(s); }
+  function syncUnB64(str){ var bin = atob(String(str || '')), a = new Uint8Array(bin.length); for(var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; }
+  function syncRand(n){ var a = new Uint8Array(n); window.crypto.getRandomValues(a); return syncHex(a); }
+  function syncSha256(str){ return window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then(syncHex); }
+
+  /* 방 이름+암호 → {key, path(방 코드), tag(암호 확인 코드)} */
+  function syncDerive(room, pass){
+    var rk = syncSafeRoom(room);
+    var salt = new TextEncoder().encode('our-family-salt|' + rk);
+    var msg = new TextEncoder().encode(rk + '|' + String(pass));
+    return syncSha256('our-family-room|' + rk).then(function(path){
+      return window.crypto.subtle.importKey('raw', msg, 'PBKDF2', false, ['deriveBits']).then(function(base){
+        return window.crypto.subtle.deriveBits({name:'PBKDF2', salt:salt, iterations:SYNC_ITER, hash:'SHA-256'}, base, 256);
+      }).then(function(bits){
+        return window.crypto.subtle.importKey('raw', bits, {name:'AES-GCM'}, false, ['encrypt','decrypt']).then(function(key){
+          return {key:key, path:path.slice(0, 40), tag:syncHex(bits).slice(0, 6).toUpperCase()};
+        });
+      });
+    });
+  }
+  function syncEncrypt(key, obj){
+    var iv = new Uint8Array(12);
+    window.crypto.getRandomValues(iv);
+    var plain = new TextEncoder().encode(JSON.stringify(obj));
+    return window.crypto.subtle.encrypt({name:'AES-GCM', iv:iv}, key, plain).then(function(ct){
+      return {iv: syncB64(iv), ct: syncB64(ct)};
+    });
+  }
+  function syncDecrypt(key, iv, ct){
+    return window.crypto.subtle.decrypt({name:'AES-GCM', iv:syncUnB64(iv)}, key, syncUnB64(ct)).then(function(buf){
+      return JSON.parse(new TextDecoder().decode(buf));
+    });
+  }
+
+  function syncLoadCfg(){
+    var cfg = null;
+    try{ cfg = JSON.parse(localStorage.getItem(SYNC_STORE) || 'null'); }catch(e){ cfg = null; }
+    if(!cfg || typeof cfg !== 'object') cfg = {};
+    syncCfg = {
+      room: typeof cfg.room === 'string' ? cfg.room : '',
+      pass: typeof cfg.pass === 'string' ? cfg.pass : '',
+      deviceId: (typeof cfg.deviceId === 'string' && cfg.deviceId) ? cfg.deviceId : 'dev-local',
+      on: cfg.on === true
+    };
+    if(syncAvailable()) syncCfg.deviceId = syncRand(6);
+    syncSaveCfg();
+  }
+  function syncSaveCfg(){
+    try{ localStorage.setItem(SYNC_STORE, JSON.stringify(syncCfg)); }catch(e){}
+  }
+
+  /* 동기화로 주고받는 상태 — 화면 비밀번호·복구 질문은 기기마다 다르므로 빼고 보낸다 */
+  function syncSnapshot(){
+    var copy;
+    try{ copy = JSON.parse(JSON.stringify(state)); }catch(e){ copy = {}; }
+    if(copy.settings){
+      delete copy.settings.pinHash;
+      delete copy.settings.pinFails;
+      delete copy.settings.pinLocked;
+      delete copy.settings.recoveryQ;
+      delete copy.settings.recoveryA;
+      delete copy.settings.showPrivate;
+      delete copy.settings.lastSync;
+    }
+    return copy;
+  }
+
+  function syncLoadSdk(){
+    if(window.firebase && window.firebase.database) return Promise.resolve();
+    var load = function(src){
+      return new Promise(function(res, rej){
+        var s = document.createElement('script');
+        s.src = src; s.async = true;
+        s.onload = function(){ res(); };
+        s.onerror = function(){ rej(new Error('SDK를 불러오지 못했어요')); };
+        document.head.appendChild(s);
+      });
+    };
+    return load(SYNC_SDK + 'firebase-app-compat.js')
+      .then(function(){ return load(SYNC_SDK + 'firebase-database-compat.js'); })
+      .then(function(){ if(!(window.firebase && window.firebase.database)) throw new Error('SDK 없음'); });
+  }
+
+  function syncStart(roomArg, passArg){
+    var room = String(roomArg || '').trim();
+    var pass = String(passArg || '');
+    if(!syncAvailable()){ syncInfo.status = 'error'; syncInfo.err = '이 브라우저는 암호화를 지원하지 않아요'; renderSync(); return; }
+    if(syncSafeRoom(room).length < 2 || pass.length < 4){
+      toast('방 이름은 2자, 암호는 4자 이상으로 정해 주세요');
+      return;
+    }
+    syncStop(true);
+    syncCfg.room = room; syncCfg.pass = pass; syncCfg.on = true;
+    if(!syncCfg.deviceId || syncCfg.deviceId === 'dev-local') syncCfg.deviceId = syncRand(6);
+    syncSaveCfg();
+    syncInfo.status = 'connecting'; syncInfo.err = ''; syncInfo.lastAt = 0;
+    syncNeedInit = false; syncAppliedTs = 0; syncLastHash = '';
+    renderSync();
+    syncDerive(room, pass).then(function(d){
+      syncKey = d.key;
+      syncRoomCode = d.tag;
+      return syncLoadSdk().then(function(){ syncConnect(d.path); });
+    }).catch(function(err){
+      syncInfo.status = 'error';
+      syncInfo.err = (err && err.message) || '연결하지 못했어요';
+      renderSync();
+    });
+  }
+
+  function syncConnect(path){
+    var app = null;
+    try{ app = window.firebase.app('family-sync'); }catch(e){ app = null; }
+    if(!app){
+      try{ app = window.firebase.initializeApp(SYNC_FIREBASE, 'family-sync'); }
+      catch(e2){ app = window.firebase.app(); }
+    }
+    syncDb = window.firebase.database(app);
+    syncRef = syncDb.ref('rooms/' + path);
+    syncDb.ref('.info/connected').on('value', function(snap){
+      syncOnline = snap.val() === true;
+      if(syncOnline && (syncInfo.status === 'connecting' || syncInfo.status === 'wait')) syncInfo.status = 'ready';
+      renderSync();
+      if(syncOnline && syncNeedInit) pushSync(true);
+    });
+    syncRef.on('value', function(snap){
+      if(snap.exists()){ syncOnRemote(snap.val()); }
+      else { syncNeedInit = true; pushSync(true); }
+    }, function(err){
+      syncInfo.status = 'error';
+      syncInfo.err = '읽기 실패: ' + ((err && err.message) || '권한 없음');
+      renderSync();
+    });
+    syncInfo.status = 'ready';
+    renderSync();
+  }
+
+  function syncOnRemote(payload){
+    if(!payload || typeof payload !== 'object' || !payload.ct || !payload.iv) return;
+    var ts = Number(payload.ts) || 0;
+    if(payload.by === syncCfg.deviceId){
+      if(ts > syncInfo.lastAt){ syncInfo.lastAt = ts; renderSync(); }
+      return;
+    }
+    if(ts <= syncAppliedTs) return;
+    syncDecrypt(syncKey, payload.iv, payload.ct).then(function(data){
+      if(!data || typeof data !== 'object' || ts <= syncAppliedTs) return;
+      syncApply(data, payload, ts);
+    }).catch(function(){
+      syncInfo.status = 'badkey';
+      renderSync();
+    });
+  }
+
+  function syncApply(data, payload, ts){
+    var keep = state.settings ? {
+      pinHash: state.settings.pinHash, pinFails: state.settings.pinFails, pinLocked: state.settings.pinLocked,
+      recoveryQ: state.settings.recoveryQ, recoveryA: state.settings.recoveryA,
+      showPrivate: state.settings.showPrivate, heroOpen: state.settings.heroOpen
+    } : {};
+    var next;
+    try{ next = migrateState(normalize(data)); }catch(e){ return; }
+    next.settings = Object.assign({}, next.settings, keep);
+    next.settings.lastSync = new Date().toISOString();
+    syncApplying = true;
+    state = next;
+    try{ localStorage.setItem(STORE, JSON.stringify(state)); }catch(e){}
+    syncApplying = false;
+    syncAppliedTs = ts;
+    syncNeedInit = false;
+    syncInfo.status = 'ready';
+    syncInfo.lastAt = ts;
+    syncInfo.lastBy = payload.by || '';
+    renderAll();
+    renderSync();
+    if(Date.now() - syncToastAt > 12000){ toast('가족 폰의 새 기록을 받았어요'); syncToastAt = Date.now(); }
+  }
+
+  function scheduleSyncPush(){
+    if(!syncCfg || !syncCfg.on || !syncRef || !syncKey || syncApplying) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(function(){ pushSync(false); }, 1800);
+  }
+
+  function pushSync(force){
+    if(!syncCfg || !syncCfg.on) return;
+    if(!syncRef || !syncKey || !syncOnline) return;
+    if(syncInfo.status === 'badkey'){ if(force) toast('암호가 다른 방이라 보내지 않았어요'); return; }
+    if(syncBusy) return;
+    var snap = syncSnapshot(), json;
+    try{ json = JSON.stringify(snap); }catch(e){ return; }
+    if(!force && json === syncLastHash){ syncNeedInit = false; return; }
+    syncBusy = true;
+    syncEncrypt(syncKey, snap).then(function(enc){
+      var ts = Date.now();
+      return syncRef.set({v:1, iv:enc.iv, ct:enc.ct, ts:ts, by:syncCfg.deviceId, app:'our-family'}).then(function(){
+        syncBusy = false;
+        syncNeedInit = false;
+        syncLastHash = json;
+        syncAppliedTs = ts;
+        syncInfo.lastAt = ts;
+        syncInfo.lastBy = syncCfg.deviceId;
+        if(syncInfo.status !== 'ready') syncInfo.status = 'ready';
+        renderSync();
+        if(force) toast('가족 폰으로 지금 보냈어요');
+      });
+    }).catch(function(err){
+      syncBusy = false;
+      syncInfo.status = 'error';
+      syncInfo.err = '보내기 실패: ' + ((err && err.message) || '');
+      renderSync();
+      if(force) toast('보내지 못했어요. 연결을 확인해 주세요');
+    });
+  }
+
+  function syncStop(silent){
+    clearTimeout(syncTimer);
+    try{ if(syncRef) syncRef.off(); }catch(e){}
+    try{ if(syncDb) syncDb.ref('.info/connected').off(); }catch(e){}
+    syncRef = null; syncOnline = false; syncKey = null;
+    if(!silent){ syncInfo.status = 'off'; renderSync(); }
+  }
+
+  function syncBadge(){
+    if(!syncCfg || !syncCfg.on || syncInfo.status === 'off') return {text:'동기화 꺼짐 · 두 폰이 따로 저장해요', pill:'동기화 끔', cls:'off'};
+    if(syncInfo.status === 'badkey') return {text:'🔴 암호가 달라요 · 두 폰 암호를 맞춰 주세요', pill:'🔴 암호 확인', cls:'err'};
+    if(syncInfo.status === 'error') return {text:'🔴 연결에 문제가 있어요', pill:'🔴 연결 오류', cls:'err'};
+    if(syncInfo.status === 'connecting') return {text:'🟡 연결 중…', pill:'🟡 연결 중', cls:'warn'};
+    return syncOnline
+      ? {text:'🟢 실시간 동기화 연결됨', pill:'🟢 동기화', cls:'on'}
+      : {text:'🟡 연결을 기다리는 중…', pill:'🟡 대기', cls:'warn'};
+  }
+
+  function renderSync(){
+    var b = syncBadge();
+    var pill = $('#syncPill');
+    if(pill){
+      pill.className = 'syncPill ' + b.cls;
+      pill.textContent = b.pill;
+      pill.style.display = (b.cls === 'off') ? 'none' : 'inline-flex';
+    }
+    var hint = $('#syncStateHint');
+    if(hint) hint.textContent = b.text;
+    updateSyncLabel();
+    var box = $('#syncBox');
+    if(!box) return;
+    if(!syncAvailable()){
+      box.innerHTML = '<p class="appNote">이 브라우저는 암호화(WebCrypto)를 지원하지 않아 실시간 동기화를 쓸 수 없어요. https 주소나 최신 브라우저에서 열어 주세요.</p>';
+      return;
+    }
+    if(!syncCfg || !syncCfg.on){
+      box.innerHTML =
+        '<label class="fld"><span>가족 방 이름</span><input id="syncRoom" type="text" maxlength="24" placeholder="예: 우리가족" value="' + esc(syncCfg ? syncCfg.room : '') + '" autocomplete="off"></label>' +
+        '<label class="fld"><span>가족 암호 (4자 이상)</span><input id="syncPass" type="password" maxlength="40" placeholder="두 폰만 아는 암호" autocomplete="new-password"></label>' +
+        '<button class="primaryBtn" data-act="syncStart">🔄 실시간 동기화 켜기</button>' +
+        '<p class="appNote" style="margin-top:8px">두 폰에 <b>같은 방 이름과 암호</b>를 넣으면 일정·쪽지·장보기가 서로 바로 보여요. 기록은 올리기 전에 이 폰에서 암호로 잠그고(AES&#8209;GCM), 서버에는 잠긴 내용만 올라가요.</p>';
+      return;
+    }
+    box.innerHTML =
+      '<div class="safeRow">' +
+        '<span class="safeIcon">🔄</span>' +
+        '<span class="safeText"><span class="safeTitle">방 “' + esc(syncCfg.room) + '”</span>' +
+        '<span class="safeSub">암호 확인 코드 ' + esc(syncRoomCode || '····') +
+        ' · 마지막 수신 ' + (syncInfo.lastAt ? timeLabel(new Date(syncInfo.lastAt).toISOString()) : '아직 없음') + '</span></span>' +
+        '<button class="miniBtn" data-act="syncNow">지금 보내기</button>' +
+      '</div>' +
+      '<div class="row2">' +
+        '<button class="ghostBtn2" data-act="syncPause">잠시 끄기</button>' +
+        '<button class="ghostBtn2" data-act="syncForget">연결 해제</button>' +
+      '</div>' +
+      (syncInfo.err ? '<p class="appNote" style="margin-top:8px">연결 메모: ' + esc(syncInfo.err) + '</p>' : '') +
+      (syncInfo.status === 'badkey' ? '<button class="ghostBtn2" data-act="syncReset" style="margin-top:8px">이 방을 이 폰 기록으로 새로 시작</button>' : '') +
+      '<p class="appNote" style="margin-top:8px">방 이름은 띄어쓰기를 무시하고 맞춰요. 암호가 서로 다르면 기록을 풀 수 없어 <b>🔴 암호가 달라요</b>로 표시되고, 그때는 보내기를 멈춰요.</p>';
   }
   function toast(msg){
     var t = $('#toast');
@@ -2617,7 +2946,7 @@ body{position:relative}
     $('#pinState').textContent = (st.pinHash ? '켜짐' : '꺼짐') + ' · 4자리로 기록을 가려요';
     $('#pinRowBtn').textContent = st.pinHash ? '비밀번호 관리' : '비밀번호 켜기';
     $('#lockNowBtn').style.display = st.pinHash ? 'flex' : 'none';
-    updateSyncLabel();
+    renderSync();
 
     $('#momInfo').innerHTML = '엄마 ' + (fmtPhone(st.contacts.mom) ? '<a href="tel:' + st.contacts.mom + '" data-act="logCall" data-who="엄마에게 전화">' + fmtPhone(st.contacts.mom) + '</a>' : '번호 없음') + '<small>눌러서 전화</small>';
     $('#dadInfo').innerHTML = '아빠 ' + (fmtPhone(st.contacts.dad) ? '<a href="tel:' + st.contacts.dad + '" data-act="logCall" data-who="아빠에게 전화">' + fmtPhone(st.contacts.dad) + '</a>' : '번호를 등록해 주세요') + '<small>가족이 함께 쓰는 연락처</small>';
@@ -3501,7 +3830,35 @@ body{position:relative}
         break;
       case 'syncNow':
         save();
-        commit('지금 저장했어요');
+        if(syncCfg && syncCfg.on) pushSync(true);
+        else commit('지금 저장했어요');
+        break;
+      case 'syncStart': {
+        var sRoom = $('#syncRoom'), sPass = $('#syncPass');
+        syncStart(sRoom ? sRoom.value : '', sPass ? sPass.value : '');
+        break;
+      }
+      case 'syncPause':
+        if(syncCfg){ syncCfg.on = false; syncSaveCfg(); }
+        syncStop(false);
+        toast('실시간 동기화를 껐어요 (기록은 이 폰에 그대로)');
+        break;
+      case 'syncForget':
+        confirmSheet('동기화 연결을 해제할까요?', '이 폰의 기록은 그대로 남고, 방 이름·암호만 지워요.', function(){
+          syncStop(false);
+          syncCfg = {room:'', pass:'', deviceId: syncRand(6), on:false};
+          syncSaveCfg();
+          syncInfo = {status:'off', lastAt:0, lastBy:'', err:''};
+          syncRoomCode = '';
+          renderSync();
+          toast('연결을 해제했어요');
+        }, '해제');
+        break;
+      case 'syncReset':
+        confirmSheet('이 방을 이 폰 기록으로 새로 시작할까요?', '같은 방·암호인데도 안 맞을 때만 쓰세요. 방에 있던 기록을 이 폰 기록으로 덮어써요.', function(){
+          syncInfo.status = 'ready';
+          pushSync(true);
+        }, '덮어쓰기');
         break;
       case 'exportBackup': exportBackup(); break;
       case 'importBackup': importBackup(); break;
@@ -3596,6 +3953,10 @@ body{position:relative}
     var home = $('#view-home');
     if(home && home.classList.contains('active')) renderHome();
   }, 60000);
+
+  syncLoadCfg();
+  renderSync();
+  if(syncCfg.on && syncCfg.room && syncCfg.pass) syncStart(syncCfg.room, syncCfg.pass);
 
   if(state.settings.pinHash){
     showLock();
