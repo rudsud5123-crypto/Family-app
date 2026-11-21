@@ -697,6 +697,36 @@ body{position:relative}
 .miniBtns button{width:27px;height:27px;border-radius:9px;background:#FFFDF7;border:1px solid #F1E5C9;color:#B59A6A;font-size:11px}
 .chk.on{background:#4CC38A;border-color:#4CC38A;color:#fff}
 
+/* ---------- 아플 때 기록 (접이식) ---------- */
+.foldHead{display:flex;align-items:center;gap:8px;width:100%;background:none;border:0;padding:2px 2px 6px;text-align:left}
+.foldHead h2{font-size:15px;font-weight:800;letter-spacing:-.3px}
+.foldHead .hint{margin-left:auto;font-size:10.5px;color:#B5A493}
+.chev{display:inline-block;font-size:9px;color:#A6927E;transition:transform .18s ease}
+.foldHead.open .chev{transform:rotate(180deg)}
+.tForm{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 10px}
+.tFld{min-width:0}
+.tFld>span{display:block;font-size:10px;font-weight:800;color:#8A7458;margin-bottom:4px}
+.tFld input{width:100%;height:40px;border-radius:12px;border:1.5px solid #F0E4C8;background:#FFFDF6;padding:0 10px;font-size:12.5px;color:#6A5544;font-family:inherit}
+.tFld input:disabled{background:#F4EEE2;color:#B5A493}
+.tFld input:focus{outline:none;border-color:#F0C978;box-shadow:0 0 0 3px rgba(240,201,120,.18)}
+.tFld.wide{grid-column:1 / -1}
+.medChips{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.medChip{min-height:40px;border-radius:12px;border:1.5px solid #F0E4C8;background:#FFFDF6;font-size:11px;font-weight:700;color:#7A6453;padding:6px 8px;line-height:1.3;text-align:left}
+.medChip.on{background:#FFE7EF;border-color:#F7C4D2;color:#B8577A}
+.tFld>.tBadge{margin-top:2px}
+.tBadge{display:inline-block;width:auto;font-size:10.5px;font-weight:800;border-radius:99px;padding:3px 8px;background:#E9F7ED;color:#3A8A5B;white-space:nowrap}
+.tempLast{font-size:11.5px;color:#6A5544;background:#FFFDF6;border:1px dashed #F2E7CE;border-radius:12px;padding:7px 9px;margin-top:2px;overflow-wrap:anywhere}
+.tBadge.mild{background:#FFF0D6;color:#A9762B}
+.tBadge.hot{background:#FFE3E3;color:#B83B2E}
+.tListHead{font-size:10.5px;font-weight:800;color:#A6927E;margin:12px 0 2px;border-top:1px dashed #F2E7CE;padding-top:9px}
+.tItem{padding:9px 0;border-bottom:1px dashed #F2E7CE}
+.tItem:last-child{border-bottom:0}
+.tLine1{display:flex;align-items:center;gap:6px}
+.tWhen{font-size:12.8px;font-weight:800;color:#5A4433}
+.tDel{margin-left:auto;width:24px;height:24px;border-radius:8px;background:#FFFDF7;border:1px solid #F1E5C9;color:#C0AC95;font-size:10px;flex:0 0 auto}
+.tLine2{font-size:11.5px;color:#6A5544;margin-top:3px;overflow-wrap:anywhere;line-height:1.45}
+.tLine3{font-size:10px;color:#B5A493;margin-top:2px}
+
 /* ---------- 사이즈 수첩 · 대피소 ---------- */
 .sizeCard{border-radius:16px;border:1px solid #F7EDD5;padding:10px 11px;margin-top:8px;background:#FFFDF7}
 .sizeCard.hyun{background:#FFF7FA;border-color:#FFE0EA}
@@ -2159,22 +2189,98 @@ body{position:relative}
       }).join('') : '<div class="emptyCard">아직 버킷리스트가 없어요. 가족이 같이 가고 싶은 곳을 적어 보세요.</div>') +
       '<button class="addWide" data-act="addBucket">+ 버킷리스트 추가</button></div>';
   }
+  var TEMP_MEDS = [
+    {key:'acetaminophen', label:'아세트아미노펜(타이레놀)'},
+    {key:'ibuprofen',     label:'이부프로펜/덱시부프로펜(맥시부펜)'},
+    {key:'rx',            label:'처방약/기타'},
+    {key:'none',          label:'약 안 먹음'}
+  ];
+  var TEMP_MED_SEL = 'acetaminophen';
+  var TEMP_OPEN = false; /* 앱을 열 때마다 접힌 상태로 시작한다 */
+  function tempBadge(v){
+    if(v === '' || v == null) return {cls:'', text:''};
+    var n = parseFloat(v);
+    if(isNaN(n)) return {cls:'', text:''};
+    if(n >= 38.0) return {cls:'hot', text:'고열'};
+    if(n >= 37.5) return {cls:'mild', text:'미열'};
+    return {cls:'', text:'정상'};
+  }
+  function tempGapText(ms){
+    var m = Math.max(0, Math.round(ms / 60000));
+    if(m < 60) return m + '분';
+    var h = Math.floor(m / 60), mm = m % 60;
+    return h + '시간' + (mm ? ' ' + mm + '분' : '');
+  }
+  function medShort(label){ return String(label || '').replace(/\(.*?\)/g, '').trim(); }
+  function tempWhen(iso){
+    if(!iso) return '';
+    var d = new Date(iso);
+    var k = ymd(d);
+    var y2 = new Date(); y2.setDate(y2.getDate() - 1);
+    var day = (k === todayKey()) ? '오늘' : (k === ymd(y2) ? '어제' : (d.getMonth()+1) + '.' + d.getDate());
+    return day + ' ' + timeLabel(iso);
+  }
   function tempHTML(){
     var list = state.temp.slice().sort(function(a,b){ return (a.at || '') < (b.at || '') ? 1 : -1; });
-    return '<div class="card" style="margin-top:0">' +
-      '<div class="cardHead"><h2>🌡️ 컨디션·해열제 로그</h2><span class="hint">' + (list.length ? '최근 ' + Math.min(list.length, 30) + '건' : '아직 기록 없음') + '</span></div>' +
-      (list.length ? list.slice(0, 30).map(function(t){
-        var hot = parseFloat(t.temp) >= 38.5;
-        var head = t.temp
-          ? '<b style="color:' + (hot ? '#C2453B' : '#4B8C63') + '">' + esc(t.temp) + '℃</b>' + (t.med ? ' · ' + esc(t.med) + (t.ml ? ' ' + esc(t.ml) + 'ml' : '') : '')
-          : (t.med ? esc(t.med) + (t.ml ? ' ' + esc(t.ml) + 'ml' : '') : '메모');
-        return '<div class="miniRow">' +
-          '<span class="miniMain"><span class="miniTitle">' + head + '</span>' +
-            '<span class="miniSub">' + dateLabel(t.at) + ' ' + timeLabel(t.at) + (t.memo ? ' · ' + esc(t.memo) : '') + '</span></span>' +
-          (hot ? '<span class="dd hot">고열</span>' : '') +
-          '<span class="miniBtns"><button data-act="delTemp" data-id="' + t.id + '" aria-label="삭제">✕</button></span></div>';
-      }).join('') : '<div class="emptyCard">아직 기록이 없어요. 열이 날 때 체온과 해열제를 남겨 두면 병원에서 큰 도움이 돼요.</div>') +
-      '<button class="addWide" data-act="addTemp">+ 체온·해열제 기록</button></div>';
+    var open = TEMP_OPEN === true;
+    var now = new Date();
+    var html = '<div class="card" style="margin-top:0">' +
+      '<button class="foldHead ' + (open ? 'open' : '') + '" data-act="toggleTempFold" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+        '<h2>🌡️ 아플 때 기록 (열·약)</h2>' +
+        '<span class="hint">' + (list.length ? '최근 ' + list.length + '건' : '아직 없어요') + '</span>' +
+        '<span class="chev">▼</span>' +
+      '</button>';
+    if(!open){
+      if(list.length){
+        var last = list[0];
+        var bits = [tempWhen(last.at)];
+        if(last.temp) bits.push(esc(last.temp) + '℃');
+        if(last.med && last.med !== '약 안 먹음') bits.push(esc(medShort(last.med)) + (last.ml ? ' ' + esc(last.ml) + 'ml' : ''));
+        else if(last.med === '약 안 먹음') bits.push('약 안 먹음');
+        html += '<div class="tempLast">최근 · ' + bits.join(' · ') + '</div>';
+      }
+      html += '<p class="appNote" style="margin-top:2px">필요할 때만 펼쳐서 체온과 해열제를 남겨 두세요.</p></div>';
+      return html;
+    }
+    html += '<div class="tForm">' +
+        '<label class="tFld"><span>날짜</span><input id="tempDate" type="date" value="' + todayKey() + '"></label>' +
+        '<label class="tFld"><span>시간</span><input id="tempTime" type="time" value="' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + '"></label>' +
+        '<label class="tFld"><span>체온 (℃)</span><input id="tempVal" type="number" min="34" max="42" step="0.1" inputmode="decimal" placeholder="예: 38.2"></label>' +
+        '<div class="tFld"><span>상태</span><div class="tBadge" id="tempBadge">체온을 넣으면 표시돼요</div></div>' +
+        '<div class="tFld wide"><span>약 복용</span><div class="medChips">' + TEMP_MEDS.map(function(m){
+          return '<button type="button" class="medChip ' + (m.key === TEMP_MED_SEL ? 'on' : '') + '" data-act="tempMedPick" data-med="' + m.key + '">' + m.label + '</button>';
+        }).join('') + '</div></div>' +
+        '<label class="tFld"><span>용량 (ml)</span><input id="tempMl" type="number" min="0" step="0.5" inputmode="decimal" placeholder="예: 5"' + (TEMP_MED_SEL === 'none' ? ' disabled' : '') + '></label>' +
+        '<label class="tFld"><span>증상 메모</span><input id="tempMemo" type="text" maxlength="60" placeholder="기침·콧물·구토 등"></label>' +
+      '</div>' +
+      '<button class="primaryBtn" data-act="saveTemp">기록하기</button>';
+
+    var asc = state.temp.slice().sort(function(a,b){ return (a.at || '') > (b.at || '') ? 1 : -1; });
+    var gapBy = {};
+    var lastMed = 0;
+    asc.forEach(function(t){
+      if(!t.at) return;
+      if(t.med && t.med !== '약 안 먹음'){
+        var ts = new Date(t.at).getTime();
+        if(lastMed && ts > lastMed) gapBy[t.id] = ts - lastMed;
+        lastMed = ts;
+      }
+    });
+    html += '<div class="tListHead">기록 ' + list.length + '건 · 최신 순</div>';
+    html += list.length ? list.slice(0, 50).map(function(t){
+      var b = tempBadge(t.temp);
+      var medLine = t.med ? ((t.med === '약 안 먹음' ? '' : '💊 ') + esc(t.med) + (t.ml ? ' ' + esc(t.ml) + 'ml' : '')) : '';
+      var sub = [medLine, t.memo ? esc(t.memo) : ''].filter(Boolean).join(' · ');
+      return '<div class="tItem">' +
+        '<div class="tLine1"><span class="tWhen">' + tempWhen(t.at) + '</span>' +
+          (t.temp ? '<span class="tBadge ' + b.cls + '">' + esc(t.temp) + '℃' + (b.text ? ' ' + b.text : '') + '</span>' : '') +
+          '<button class="tDel" data-act="delTemp" data-id="' + t.id + '" aria-label="삭제">✕</button></div>' +
+        (sub ? '<div class="tLine2">' + sub + '</div>' : '') +
+        (gapBy[t.id] ? '<div class="tLine3">앞 해열제와 ' + tempGapText(gapBy[t.id]) + ' 간격</div>' : '') +
+      '</div>';
+    }).join('') : '<div class="emptyCard">아직 기록이 없어요. 열이 날 때 체온과 해열제를 남겨 두면 병원에서 큰 도움이 돼요.</div>';
+    html += '</div>';
+    return html;
   }
   function renderPedi(){
     var box = $('#pediBox');
@@ -2720,24 +2826,21 @@ body{position:relative}
     b.done = !b.done;
     commit(b.done ? '하나 이뤘어요! 🎉' : '완료를 풀었어요');
   }
-  function sheetTemp(){
-    var body = '<label class="fld"><span>체온 (℃)</span><input id="fTemp" type="number" min="34" max="42" step="0.1" inputmode="decimal" placeholder="예: 38.2"></label>' +
-      '<label class="fld"><span>해열제 종류</span><input id="fMed" type="text" maxlength="30" placeholder="예: 아세트아미노펜 시럽"></label>' +
-      '<label class="fld"><span>먹인 양 (ml)</span><input id="fMl" type="number" min="0" step="0.5" placeholder="예: 5"></label>' +
-      '<label class="fld"><span>메모 (선택)</span><input id="fMemo" type="text" maxlength="80" placeholder="예: 미온수 마사지 · 3시간 뒤 37.8℃"></label>' +
-      '<button class="primaryBtn" data-act="saveTemp">기록하기</button>';
-    openSheet('🌡️ 체온·해열제 기록', '열이 날 때 한 줄씩 남겨 두세요', body);
-    setTimeout(function(){ var el = $('#fTemp'); if(el) el.focus(); }, 120);
-  }
   function saveTemp(){
-    var temp = ($('#fTemp') ? $('#fTemp').value : '').trim();
-    var med = ($('#fMed') ? $('#fMed').value : '').trim();
-    var ml = ($('#fMl') ? $('#fMl').value : '').trim();
-    var memo = ($('#fMemo') ? $('#fMemo').value : '').trim();
-    if(!temp && !med && !memo){ toast('체온이나 해열제를 적어 주세요'); return; }
-    state.temp.push({id:uid(), at:new Date().toISOString(), temp:temp, med:med, ml:ml, memo:memo});
-    closeSheet();
-    commit('컨디션을 기록했어요');
+    var date = $('#tempDate') ? $('#tempDate').value : '';
+    var time = $('#tempTime') ? $('#tempTime').value : '';
+    var temp = ($('#tempVal') ? $('#tempVal').value : '').trim();
+    var ml = ($('#tempMl') ? $('#tempMl').value : '').trim();
+    var memo = ($('#tempMemo') ? $('#tempMemo').value : '').trim();
+    var mk = TEMP_MED_SEL;
+    var med = (TEMP_MEDS.filter(function(m){ return m.key === mk; })[0] || {}).label || '';
+    if(!date || !time){ toast('날짜와 시간을 넣어 주세요'); return; }
+    if(!temp && mk === 'none' && !memo){ toast('체온이나 약, 증상을 하나는 적어 주세요'); return; }
+    var dpart = date.split('-'), tpart = time.split(':');
+    var at = new Date(Number(dpart[0]), Number(dpart[1]) - 1, Number(dpart[2]), Number(tpart[0]), Number(tpart[1]), 0).toISOString();
+    state.temp.push({id:uid(), at:at, temp:temp, med:med, ml:(mk === 'none' ? '' : ml), memo:memo});
+    if(state.temp.length > 300) state.temp = state.temp.slice(-300);
+    commit('기록했어요');
   }
   function sheetSize(who){
     var s = (state.sizes && state.sizes[who]) || {};
@@ -3333,7 +3436,16 @@ body{position:relative}
         state.bucket = state.bucket.filter(function(x){ return x.id !== el.dataset.id; });
         commit('버킷리스트에서 지웠어요');
         break;
-      case 'addTemp': sheetTemp(); break;
+      case 'addTemp': TEMP_OPEN = true; renderRecord(); break;
+      case 'toggleTempFold': TEMP_OPEN = !TEMP_OPEN; renderRecord(); break;
+      case 'tempMedPick': {
+        TEMP_MED_SEL = el.dataset.med || 'acetaminophen';
+        var chipWrap = el.parentNode;
+        if(chipWrap) $all('.medChip', chipWrap).forEach(function(b){ b.classList.toggle('on', b === el); });
+        var mlEl = $('#tempMl');
+        if(mlEl) mlEl.disabled = (TEMP_MED_SEL === 'none');
+        break;
+      }
       case 'saveTemp': saveTemp(); break;
       case 'delTemp':
         state.temp = state.temp.filter(function(x){ return x.id !== el.dataset.id; });
@@ -3436,6 +3548,13 @@ body{position:relative}
     } else if(t.id === 'emergMemo'){
       state.emergMemo = String(t.value).slice(0, 400);
       save();
+    } else if(t.id === 'tempVal'){
+      var bd = $('#tempBadge');
+      if(bd){
+        var bb = tempBadge(String(t.value));
+        bd.className = 'tBadge ' + bb.cls;
+        bd.textContent = String(t.value) ? (t.value + '℃' + (bb.text ? ' ' + bb.text : '')) : '체온을 넣으면 표시돼요';
+      }
     }
   };
   document.addEventListener('input', eventInput);
